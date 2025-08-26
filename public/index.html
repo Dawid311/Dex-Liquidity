@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dex-Liquidity API</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .endpoint { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        code { background: #e8e8e8; padding: 2px 4px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>Dex-Liquidity API</h1>
+    <p>Uniswap v3 pool metrics for D.FAITH token on Base chain</p>
+    
+    <h2>Endpoints</h2>
+    <div class="endpoint">
+        <strong>GET /api/health</strong><br>
+        Health check endpoint
+    </div>
+    
+    <div class="endpoint">
+        <strong>GET /api/metrics</strong><br>
+        Token pool metrics<br>
+        Parameters: <code>token</code> (address), <code>chainId</code> (default: 8453)
+    </div>
+    
+    <h2>Example</h2>
+    <div class="endpoint">
+        <a href="/api/metrics?token=0x69eFD833288605f320d77eB2aB99DDE62919BbC1&chainId=8453">
+            /api/metrics?token=0x69eFD833288605f320d77eB2aB99DDE62919BbC1&chainId=8453
+        </a>
+    </div>
+    
+    <script>
+        // Auto-fetch metrics and display
+        fetch('/api/metrics?token=0x69eFD833288605f320d77eB2aB99DDE62919BbC1&chainId=8453')
+            .then(r => r.json())
+            .then(data => {
+                if (data.marketCapEUR) {
+                    document.body.innerHTML += `
+                        <h2>Live D.FAITH Metrics</h2>
+                        <div class="endpoint">
+                            <strong>Market Cap (EUR):</strong> €${data.marketCapEUR.circulating.toLocaleString()}<br>
+                            <strong>Token Price (EUR):</strong> €${data.priceEUR?.toFixed(6)}<br>
+                            <strong>Pool Liquidity:</strong> ${data.balances.tokenInPool} D.FAITH, ${data.balances.quoteInPool} WETH
+                        </div>
+                    `;
+                }
+            })
+            .catch(() => {});
+    </script>
+</body>
+</html>
