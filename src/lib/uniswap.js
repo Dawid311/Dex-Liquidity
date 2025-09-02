@@ -118,22 +118,99 @@ export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAdd
   }
   if (!rpcUrl) throw new Error('ETH_RPC_URL ist erforderlich');
   
-  let provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
+  let provider;
+  let lastError;
   
-  // Test provider and fallback if needed
-  for (let i = 0; i < baseRpcs.length; i++) {
+  // Try each RPC until one works for the actual call
+  const rpcUrls = chainId === 8453 ? baseRpcs : [rpcUrl];
+  
+  for (const currentRpcUrl of rpcUrls) {
     try {
-      await provider.getBlockNumber(); // Quick connectivity test
-      break;
-    } catch (e) {
-      if (i < baseRpcs.length - 1 && chainId === 8453) {
-        console.log(`RPC ${rpcUrl} failed, trying ${baseRpcs[i + 1]}`);
-        rpcUrl = baseRpcs[i + 1];
-        provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
-      } else {
-        throw new Error(`All RPCs failed: ${e.message}`);
+      provider = new ethers.JsonRpcProvider(currentRpcUrl, chainId);
+      
+      // Test the provider with a simple call
+      await provider.getBlockNumber();
+      
+      // Try the actual pool call to make sure it works
+      const { poolAddr, fee, base, quote } = await getPoolAndBalances({ provider, chainId, tokenAddress });
+      
+      // If we get here, this RPC works, continue with full computation
+      const token = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+      const totalSupply = await token.totalSupply();
+      
+      // Filter excluded addresses from total supply
+      let circulatingSupply = totalSupply;
+      for (const excludeAddr of excludeAddresses) {
+        const balance = await token.balanceOf(excludeAddr);
+        circulatingSupply -= balance;
       }
+      
+      // Get ETH/EUR rate
+      const ethEurRate = await getEthEurRate();
+      if (!ethEurRate) throw new Error('Failed to get ETH/EUR rate');
+      
+      // Calculate metrics
+      const baseBalanceFormatted = formatUnits(base.balanceRaw, base.decimals);
+      const quoteBalanceFormatted = formatUnits(quote.balanceRaw, quote.decimals);
+      const circulatingSupplyFormatted = formatUnits(circulatingSupply, base.decimals);
+      
+      let priceInQuote = 0;
+      let priceInEur = 0;
+      let marketCapEur = 0;
+      
+      if (baseBalanceFormatted > 0) {
+        priceInQuote = quoteBalanceFormatted / baseBalanceFormatted;
+        
+        if (quote.symbol === 'WETH') {
+          priceInEur = priceInQuote * ethEurRate;
+        } else if (quote.symbol === 'USDC') {
+          priceInEur = priceInQuote * 0.85; // Approximate EUR/USD
+        }
+        
+        marketCapEur = circulatingSupplyFormatted * priceInEur;
+      }
+      
+      return {
+        token: {
+          address: tokenAddress,
+          symbol: base.symbol,
+          decimals: base.decimals,
+          totalSupply: totalSupply.toString(),
+          circulatingSupply: circulatingSupply.toString(),
+          circulatingSupplyFormatted
+        },
+        pool: {
+          address: poolAddr,
+          fee,
+          baseBalance: base.balanceRaw.toString(),
+          baseBalanceFormatted,
+          quoteBalance: quote.balanceRaw.toString(),
+          quoteBalanceFormatted,
+          quoteToken: {
+            address: quote.address,
+            symbol: quote.symbol,
+            decimals: quote.decimals
+          }
+        },
+        price: {
+          inQuote: priceInQuote,
+          inEur: priceInEur,
+          ethEurRate
+        },
+        marketCap: {
+          eur: marketCapEur
+        },
+        timestamp: new Date().toISOString(),
+        rpcUrl: currentRpcUrl
+      };
+      
+    } catch (e) {
+      console.log(`RPC ${currentRpcUrl} failed:`, e.message);
+      lastError = e;
+      // Continue to next RPC
     }
   }
-
-  const { poolAddr, fee, base, quote } = await getPoolAndBalances({ provider, chainId, tokenAddress });
+  
+  // If we get here, all RPCs failed
+  throw new Error(`All RPCs failed. Last error: ${lastError?.message || 'Unknown error'}`);
+}
