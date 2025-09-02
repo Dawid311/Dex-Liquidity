@@ -105,75 +105,35 @@ export async function getEthEurRate() {
 }
 
 export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAddresses = [] }) {
-  // Multiple RPC fallbacks for Base to get fresher data
-  const baseRpcUrls = [
+  // Multiple RPC fallbacks for Base
+  const baseRpcs = [
     'https://mainnet.base.org',
     'https://base.llamarpc.com', 
-    'https://base-mainnet.g.alchemy.com/v2/demo',
-    'https://base.blockpi.network/v1/rpc/public'
+    'https://base.blockpi.network/v1/rpc/public',
+    'https://1rpc.io/base'
   ];
   
   if (!rpcUrl && chainId === 8453) {
-    // Try multiple RPCs to get freshest data
-    for (const url of baseRpcUrls) {
-      try {
-        rpcUrl = url;
-        break;
-      } catch (e) {
-        continue;
+    rpcUrl = baseRpcs[0]; // Start with official Base RPC
+  }
+  if (!rpcUrl) throw new Error('ETH_RPC_URL ist erforderlich');
+  
+  let provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
+  
+  // Test provider and fallback if needed
+  for (let i = 0; i < baseRpcs.length; i++) {
+    try {
+      await provider.getBlockNumber(); // Quick connectivity test
+      break;
+    } catch (e) {
+      if (i < baseRpcs.length - 1 && chainId === 8453) {
+        console.log(`RPC ${rpcUrl} failed, trying ${baseRpcs[i + 1]}`);
+        rpcUrl = baseRpcs[i + 1];
+        provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
+      } else {
+        throw new Error(`All RPCs failed: ${e.message}`);
       }
     }
   }
-  if (!rpcUrl) throw new Error('ETH_RPC_URL ist erforderlich');
-  const provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
 
   const { poolAddr, fee, base, quote } = await getPoolAndBalances({ provider, chainId, tokenAddress });
-
-  const token = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-  const [totalSupplyRaw, decimalsRaw, symbol] = await Promise.all([
-    token.totalSupply(), token.decimals(), token.symbol()
-  ]);
-  const decimals = Number(decimalsRaw);
-
-  const baseBal = formatUnits(base.balanceRaw, base.decimals);
-  const quoteBal = formatUnits(quote.balanceRaw, quote.decimals);
-  const priceQuotePerBase = baseBal > 0 ? (quoteBal / baseBal) : 0; // in quote token (WETH/USDC)
-
-  const totalSupply = formatUnits(totalSupplyRaw, decimals);
-  let excludedSum = 0;
-  if (excludeAddresses.length) {
-    const bals = await Promise.all(excludeAddresses.map(a => token.balanceOf(a)));
-    excludedSum = bals.map(b => formatUnits(b, decimals)).reduce((a, b) => a + b, 0);
-  }
-  const circulating = Math.max(totalSupply - baseBal - excludedSum, 0);
-  const mc = circulating * priceQuotePerBase;
-  const fdv = totalSupply * priceQuotePerBase;
-
-  let ethEur = null, priceEUR = null, mcEUR = null, fdvEUR = null;
-  if (quote.symbol.toUpperCase() === 'WETH') {
-    ethEur = await getEthEurRate();
-    if (ethEur) {
-      priceEUR = priceQuotePerBase * ethEur;
-      mcEUR = mc * ethEur;
-      fdvEUR = fdv * ethEur;
-    }
-  }
-
-  const out = {
-    chainId,
-    pool: poolAddr,
-    fee,
-    token: { address: tokenAddress, symbol, decimals: Number(decimals) },
-    quote: { address: quote.address, symbol: quote.symbol, decimals: Number(quote.decimals) },
-    balances: { tokenInPool: baseBal, quoteInPool: quoteBal },
-    price: { [quote.symbol]: priceQuotePerBase },
-    supply: { total: totalSupply, circulating, excludedAmount: excludedSum },
-    marketCap: { circulating: mc, fdv }
-  };
-  if (ethEur) {
-    out.fx = { ethEur };
-    out.priceEUR = priceEUR;
-    out.marketCapEUR = { circulating: mcEUR, fdv: fdvEUR };
-  }
-  return out;
-}
