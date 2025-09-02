@@ -8,7 +8,12 @@ export default async function handler(req, res) {
     const exclude = (process.env.EXCLUDE_ADDRESSES || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
     const data = await computeMetrics({ tokenAddress: token, chainId, rpcUrl, excludeAddresses: exclude });
-    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
+    
+    // No caching - always fresh data
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     res.status(200).json(data);
   } catch (e) {
     res.status(500).json({ error: e?.message || 'unknown error' });

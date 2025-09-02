@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { ethers } from 'ethers';
+import { computeMetrics } from './lib/uniswap.js';
 
 // Minimal ABIs
 const ERC20_ABI = [

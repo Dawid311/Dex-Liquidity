@@ -33,22 +33,58 @@
     </div>
     
     <script>
-        // Auto-fetch metrics and display
-        fetch('/api/metrics?token=0x69eFD833288605f320d77eB2aB99DDE62919BbC1&chainId=8453')
-            .then(r => r.json())
-            .then(data => {
-                if (data.marketCapEUR) {
-                    document.body.innerHTML += `
-                        <h2>Live D.FAITH Metrics</h2>
-                        <div class="endpoint">
-                            <strong>Market Cap (EUR):</strong> €${data.marketCapEUR.circulating.toLocaleString()}<br>
-                            <strong>Token Price (EUR):</strong> €${data.priceEUR?.toFixed(6)}<br>
-                            <strong>Pool Liquidity:</strong> ${data.balances.tokenInPool} D.FAITH, ${data.balances.quoteInPool} WETH
-                        </div>
-                    `;
-                }
-            })
-            .catch(() => {});
+        let updateInterval;
+        
+        function fetchAndDisplay() {
+            fetch('/api/metrics?token=0x69eFD833288605f320d77eB2aB99DDE62919BbC1&chainId=8453')
+                .then(r => r.json())
+                .then(data => {
+                    const existing = document.getElementById('live-metrics');
+                    if (existing) existing.remove();
+                    
+                    if (data.marketCapEUR) {
+                        const timestamp = new Date().toLocaleTimeString();
+                        document.body.innerHTML += `
+                            <div id="live-metrics" class="endpoint">
+                                <h2>🔴 Live D.FAITH Metrics</h2>
+                                <div style="font-size: 0.9em; color: #666; margin-bottom: 10px;">Last updated: ${timestamp}</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                    <div><strong>Market Cap (EUR):</strong><br>€${data.marketCapEUR.circulating.toLocaleString('de-DE', {minimumFractionDigits: 2})}</div>
+                                    <div><strong>Token Price (EUR):</strong><br>€${data.priceEUR?.toFixed(6)}</div>
+                                    <div><strong>Pool Liquidity:</strong><br>${data.balances.tokenInPool} D.FAITH</div>
+                                    <div><strong>WETH in Pool:</strong><br>${data.balances.quoteInPool?.toFixed(6)} WETH</div>
+                                </div>
+                                <div style="margin-top: 10px;">
+                                    <button onclick="toggleAutoUpdate()" id="toggle-btn" style="padding: 8px 16px; background: #0070f3; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                        🔄 Auto-Update: ON (10s)
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('live-metrics')?.remove();
+                });
+        }
+        
+        function toggleAutoUpdate() {
+            const btn = document.getElementById('toggle-btn');
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+                btn.textContent = '▶️ Start Auto-Update';
+                btn.style.background = '#666';
+            } else {
+                updateInterval = setInterval(fetchAndDisplay, 10000);
+                btn.textContent = '🔄 Auto-Update: ON (10s)';
+                btn.style.background = '#0070f3';
+            }
+        }
+        
+        // Initial load + start auto-update
+        fetchAndDisplay();
+        updateInterval = setInterval(fetchAndDisplay, 10000);
     </script>
 </body>
 </html>

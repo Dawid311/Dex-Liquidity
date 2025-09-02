@@ -105,7 +105,25 @@ export async function getEthEurRate() {
 }
 
 export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAddresses = [] }) {
-  if (!rpcUrl && chainId === 8453) rpcUrl = 'https://base.llamarpc.com';
+  // Multiple RPC fallbacks for Base to get fresher data
+  const baseRpcUrls = [
+    'https://mainnet.base.org',
+    'https://base.llamarpc.com', 
+    'https://base-mainnet.g.alchemy.com/v2/demo',
+    'https://base.blockpi.network/v1/rpc/public'
+  ];
+  
+  if (!rpcUrl && chainId === 8453) {
+    // Try multiple RPCs to get freshest data
+    for (const url of baseRpcUrls) {
+      try {
+        rpcUrl = url;
+        break;
+      } catch (e) {
+        continue;
+      }
+    }
+  }
   if (!rpcUrl) throw new Error('ETH_RPC_URL ist erforderlich');
   const provider = new ethers.JsonRpcProvider(rpcUrl, chainId);
 
