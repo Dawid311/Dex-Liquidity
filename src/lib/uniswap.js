@@ -105,16 +105,18 @@ export async function getEthEurRate() {
 }
 
 export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAddresses = [] }) {
-  // Multiple RPC fallbacks for Base
+  // Multiple RPC fallbacks for Base with different providers
   const baseRpcs = [
+    'https://base.publicnode.com',
+    'https://base.llamarpc.com',
+    'https://base-mainnet.g.alchemy.com/v2/demo', 
     'https://mainnet.base.org',
-    'https://base.llamarpc.com', 
-    'https://base.blockpi.network/v1/rpc/public',
-    'https://1rpc.io/base'
+    'https://1rpc.io/base',
+    'https://base.meowrpc.com'
   ];
   
   if (!rpcUrl && chainId === 8453) {
-    rpcUrl = baseRpcs[0]; // Start with official Base RPC
+    rpcUrl = baseRpcs[0]; // Start with PublicNode
   }
   if (!rpcUrl) throw new Error('ETH_RPC_URL ist erforderlich');
   
@@ -128,21 +130,43 @@ export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAdd
     try {
       provider = new ethers.JsonRpcProvider(currentRpcUrl, chainId);
       
-      // Test the provider with a simple call
-      await provider.getBlockNumber();
+      // Add timeout and retry logic
+      provider.pollingInterval = 1000;
+      
+      // Test the provider with a simple call first
+      const blockNumber = await provider.getBlockNumber();
+      console.log(`Testing RPC ${currentRpcUrl}, block: ${blockNumber}`);
       
       // Try the actual pool call to make sure it works
       const { poolAddr, fee, base, quote } = await getPoolAndBalances({ provider, chainId, tokenAddress });
       
       // If we get here, this RPC works, continue with full computation
       const token = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-      const totalSupply = await token.totalSupply();
+      
+      // Use Promise.allSettled for more robust error handling
+      const results = await Promise.allSettled([
+        token.totalSupply(),
+        token.decimals(),
+        token.symbol()
+      ]);
+      
+      if (results.some(r => r.status === 'rejected')) {
+        throw new Error('Token contract calls failed');
+      }
+      
+      const totalSupply = results[0].value;
+      const decimals = Number(results[1].value);
+      const symbol = results[2].value;
       
       // Filter excluded addresses from total supply
       let circulatingSupply = totalSupply;
       for (const excludeAddr of excludeAddresses) {
-        const balance = await token.balanceOf(excludeAddr);
-        circulatingSupply -= balance;
+        try {
+          const balance = await token.balanceOf(excludeAddr);
+          circulatingSupply -= balance;
+        } catch (e) {
+          console.log(`Failed to get balance for ${excludeAddr}:`, e.message);
+        }
       }
       
       // Get ETH/EUR rate
@@ -152,11 +176,13 @@ export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAdd
       // Calculate metrics
       const baseBalanceFormatted = formatUnits(base.balanceRaw, base.decimals);
       const quoteBalanceFormatted = formatUnits(quote.balanceRaw, quote.decimals);
-      const circulatingSupplyFormatted = formatUnits(circulatingSupply, base.decimals);
+      const circulatingSupplyFormatted = formatUnits(circulatingSupply, decimals);
+      const totalSupplyFormatted = formatUnits(totalSupply, decimals);
       
       let priceInQuote = 0;
       let priceInEur = 0;
       let marketCapEur = 0;
+      let fdvEur = 0;
       
       if (baseBalanceFormatted > 0) {
         priceInQuote = quoteBalanceFormatted / baseBalanceFormatted;
@@ -168,40 +194,24 @@ export async function computeMetrics({ tokenAddress, chainId, rpcUrl, excludeAdd
         }
         
         marketCapEur = circulatingSupplyFormatted * priceInEur;
+        fdvEur = totalSupplyFormatted * priceInEur;
       }
       
       return {
-        token: {
-          address: tokenAddress,
-          symbol: base.symbol,
-          decimals: base.decimals,
-          totalSupply: totalSupply.toString(),
-          circulatingSupply: circulatingSupply.toString(),
-          circulatingSupplyFormatted
-        },
-        pool: {
-          address: poolAddr,
-          fee,
-          baseBalance: base.balanceRaw.toString(),
-          baseBalanceFormatted,
-          quoteBalance: quote.balanceRaw.toString(),
-          quoteBalanceFormatted,
-          quoteToken: {
-            address: quote.address,
-            symbol: quote.symbol,
-            decimals: quote.decimals
-          }
-        },
-        price: {
-          inQuote: priceInQuote,
-          inEur: priceInEur,
-          ethEurRate
-        },
-        marketCap: {
-          eur: marketCapEur
-        },
-        timestamp: new Date().toISOString(),
-        rpcUrl: currentRpcUrl
+        chainId,
+        pool: poolAddr,
+        fee,
+        token: { address: tokenAddress, symbol, decimals: Number(decimals) },
+        quote: { address: quote.address, symbol: quote.symbol, decimals: Number(quote.decimals) },
+        balances: { tokenInPool: baseBalanceFormatted, quoteInPool: quoteBalanceFormatted },
+        price: { [quote.symbol]: priceInQuote },
+        supply: { total: totalSupplyFormatted, circulating: circulatingSupplyFormatted, excludedAmount: totalSupplyFormatted - circulatingSupplyFormatted },
+        marketCap: { circulating: marketCapEur, fdv: fdvEur },
+        fx: ethEurRate ? { ethEur: ethEurRate } : undefined,
+        priceEUR: priceInEur || undefined,
+        marketCapEUR: marketCapEur ? { circulating: marketCapEur, fdv: fdvEur } : undefined,
+        rpcUrl: currentRpcUrl,
+        timestamp: new Date().toISOString()
       };
       
     } catch (e) {
